@@ -1,3 +1,4 @@
+import pytz
 import streamlit as st # type: ignore
 from datetime import datetime, timedelta
 import math
@@ -178,7 +179,8 @@ else:
         with col1: # Colonne Informations et Statut
             st.markdown(f"### 🎮 {console}")
             status = "⚪ Idle" # Statut par défaut
-            now = datetime.now()
+            tz_mada = pytz.timezone("Indian/Antananarivo")
+            now = datetime.now(tz_mada).strftime("%Hh%M")
             running_minutes = 0.0 # Temps écoulé depuis le dernier 'start' ou 'resume'
 
             if initial: # Si une session a une heure de début initiale enregistrée
