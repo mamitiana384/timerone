@@ -1,10 +1,14 @@
-import pytz
 import streamlit as st # type: ignore
-from datetime import datetime, timedelta
 import math
 import json
 import os
 from streamlit_autorefresh import st_autorefresh # type: ignore
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo  # ✅ Gère le fuseau horaire
+
+# ✅ Fonction pour toujours utiliser le bon fuseau horaire
+def now_local():
+    return datetime.now(ZoneInfo("Indian/Antananarivo"))
 
 # --- Fonctions de Sauvegarde/Chargement ---
 DATA_FILE = "console_data.json"
@@ -179,8 +183,7 @@ else:
         with col1: # Colonne Informations et Statut
             st.markdown(f"### 🎮 {console}")
             status = "⚪ Idle" # Statut par défaut
-            tz_mada = pytz.timezone("Indian/Antananarivo")
-            now = datetime.now(tz_mada).strftime("%Hh%M")
+            now = now_local()
             running_minutes = 0.0 # Temps écoulé depuis le dernier 'start' ou 'resume'
 
             if initial: # Si une session a une heure de début initiale enregistrée
@@ -237,7 +240,7 @@ else:
              # Affiche "Démarrer" seulement si la console est inactive (Idle)
              if start is None and not is_paused:
                  if st.button("▶️ Démarrer", key=f"start_{console}"):
-                     now_start = datetime.now()
+                     now_start = now_local()
                      st.session_state.start_times[console] = now_start
                      st.session_state.session_initial_start[console] = now_start # Heure de début de la session globale
                      st.session_state.paused_elapsed[console] = 0.0 # Réinitialise le temps pausé
@@ -251,7 +254,7 @@ else:
              # Affiche "Pause" seulement si le timer est en cours
              elif start and not is_paused:
                  if st.button("⏸️ Pause", key=f"pause_{console}"):
-                     now_pause = datetime.now()
+                     now_pause = now_local()
                      elapsed_since_last_start = (now_pause - start).total_seconds() / 60
                      # Ajoute le temps écoulé depuis le dernier start/resume au temps pausé total
                      st.session_state.paused_elapsed[console] += elapsed_since_last_start
@@ -263,7 +266,7 @@ else:
              # Affiche "Reprendre" seulement si le timer est en pause
              elif is_paused:
                  if st.button("▶️ Reprendre", key=f"resume_{console}"):
-                     st.session_state.start_times[console] = datetime.now() # Redémarre le chrono interne
+                     st.session_state.start_times[console] = now_local() # Redémarre le chrono interne
                      st.session_state.is_paused[console] = False
                      save_state()
                      st.rerun()
@@ -272,7 +275,7 @@ else:
             # Affiche "Stop" si la session est en cours ou en pause
             if start or is_paused:
                 if st.button("⏹️ Stop", key=f"stop_{console}", type="primary"):
-                    end_time = datetime.now()
+                    end_time = now_local()
                     final_session_duration = paused # Commence avec le temps déjà accumulé pendant les pauses
 
                     if start: # Si le chrono tournait au moment du stop, ajoute le dernier segment de temps actif
@@ -332,7 +335,7 @@ else:
                 # Sélecteur pour la date de début réelle
                 manual_start_date = st.date_input(
                     "Date de début réelle",
-                    value=datetime.now().date(), # Défaut à aujourd'hui
+                    value=now_local().date(), # Défaut à aujourd'hui
                     key=f"manual_start_date_{console}",
                     disabled=manual_disabled,
                     help="Entrez la date à laquelle la session a *vraiment* commencé."
@@ -342,7 +345,7 @@ else:
                  manual_start_time = st.time_input(
                      "Heure de début réelle",
                      # Défaut à l'heure actuelle (arrondie à la minute) - l'utilisateur doit changer
-                     value=datetime.now().time().replace(second=0, microsecond=0),
+                     value=now_local().time().replace(second=0, microsecond=0),
                      key=f"manual_start_time_{console}",
                      disabled=manual_disabled,
                      step=timedelta(minutes=1), # Permet d'ajuster par minute
@@ -371,7 +374,7 @@ else:
                          manual_start_dt = None # Empêche la suite
 
                     if manual_start_dt: # Si la combinaison a réussi
-                        now_apply = datetime.now()
+                        now_apply = now_local()
                         # Vérifie que l'heure de début est bien dans le passé
                         if manual_start_dt >= now_apply:
                             st.error("L'heure de début manuelle doit être dans le passé.")
