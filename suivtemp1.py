@@ -368,7 +368,7 @@ else:
                 # Combine la date et l'heure sélectionnées en un objet datetime
                 try:
                     if manual_start_date and manual_start_time:
-                        manual_start_dt = datetime.combine(manual_start_date, manual_start_time)
+                        manual_start_dt = datetime.combine(manual_start_date, manual_start_time).replace(tzinfo=ZoneInfo("Indian/Antananarivo"))
                     else:
                          st.error("Date ou heure manuelle invalide.")
                          manual_start_dt = None # Empêche la suite
