@@ -1,202 +1,96 @@
-import streamlit as st
-from datetime import datetime
-import math # Needed for floor division
+import streamlit as st # type: ignore
+from datetime import datetime, timedelta
+import math
+import json
+import os
+from streamlit_autorefresh import st_autorefresh # type: ignore
 
-# Import the auto-refresh component
-from streamlit_autorefresh import st_autorefresh
+# --- Fonctions de Sauvegarde/Chargement ---
+DATA_FILE = "console_data.json"
 
-# --- Session State Initialization ---
-# (Initialization code remains the same as previous version)
-if 'consoles' not in st.session_state: st.session_state.consoles = {}
-if 'start_times' not in st.session_state: st.session_state.start_times = {}
-if 'paused_elapsed' not in st.session_state: st.session_state.paused_elapsed = {}
-if 'is_paused' not in st.session_state: st.session_state.is_paused = {}
-if 'intervals' not in st.session_state: st.session_state.intervals = {}
-if 'interval_counts' not in st.session_state: st.session_state.interval_counts = {}
-if 'session_initial_start' not in st.session_state: st.session_state.session_initial_start = {}
-if 'last_stop_summary' not in st.session_state: st.session_state.last_stop_summary = {}
+def save_state():
+    # Crée un dictionnaire contenant l'état actuel à sauvegarder
+    data = {
+        "consoles": st.session_state.consoles,
+        # Convertit les objets datetime en chaînes ISO pour la sérialisation JSON
+        "start_times": {k: v.isoformat() if v else None for k, v in st.session_state.start_times.items()},
+        "paused_elapsed": st.session_state.paused_elapsed,
+        "is_paused": st.session_state.is_paused,
+        "intervals": st.session_state.intervals,
+        "interval_counts": st.session_state.interval_counts,
+        # Convertit les objets datetime en chaînes ISO
+        "session_initial_start": {k: v.isoformat() if v else None for k, v in st.session_state.session_initial_start.items()},
+        # Gère la sérialisation du résumé, y compris les datetimes
+        "last_stop_summary": {
+            k: {
+                "start": v["start"].isoformat(),
+                "end": v["end"].isoformat(),
+                "duration": v["duration"]
+            } if v and isinstance(v, dict) and "start" in v and "end" in v and "duration" in v else None
+            for k, v in st.session_state.last_stop_summary.items()
+        }
+    }
+    # Écrit les données dans le fichier JSON
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f, indent=4) # Ajout de l'indentation pour la lisibilité
 
+def load_state():
+    # Vérifie si le fichier de données existe
+    if os.path.exists(DATA_FILE):
+        try:
+            # Ouvre et lit le fichier JSON
+            with open(DATA_FILE, "r") as f:
+                data = json.load(f)
 
-# --- Page Config and Auto-Refresh ---
-st.set_page_config(page_title="Suivi des consoles", layout="wide")
-st.title("🎮 Suivi du temps d'utilisation des consoles")
+            # Charge les données dans st.session_state, avec des valeurs par défaut
+            st.session_state.consoles = data.get("consoles", {})
+            # Reconvertit les chaînes ISO en objets datetime
+            st.session_state.start_times = {
+                k: datetime.fromisoformat(v) if v else None for k, v in data.get("start_times", {}).items()
+            }
+            st.session_state.paused_elapsed = data.get("paused_elapsed", {})
+            st.session_state.is_paused = data.get("is_paused", {})
+            st.session_state.intervals = data.get("intervals", {})
+            st.session_state.interval_counts = data.get("interval_counts", {})
+            # Reconvertit les chaînes ISO en objets datetime
+            st.session_state.session_initial_start = {
+                k: datetime.fromisoformat(v) if v else None for k, v in data.get("session_initial_start", {}).items()
+            }
+            # Reconvertit les données du résumé, y compris les datetimes
+            st.session_state.last_stop_summary = {
+                k: {
+                    "start": datetime.fromisoformat(v["start"]),
+                    "end": datetime.fromisoformat(v["end"]),
+                    "duration": v["duration"]
+                } if v and isinstance(v, dict) and "start" in v and "end" in v and "duration" in v else None
+                for k, v in data.get("last_stop_summary", {}).items()
+            }
 
-# Auto-refresher (e.g., every 15 seconds)
-refresh_interval_ms = 15000
-count = st_autorefresh(interval=refresh_interval_ms, limit=None, key="console_refresher")
+            # S'assure que tous les états nécessaires existent pour chaque console chargée
+            # Cela évite les erreurs si de nouveaux états ont été ajoutés au code depuis la dernière sauvegarde
+            loaded_consoles = list(st.session_state.consoles.keys())
+            for console in loaded_consoles:
+                st.session_state.start_times.setdefault(console, None)
+                st.session_state.paused_elapsed.setdefault(console, 0.0)
+                st.session_state.is_paused.setdefault(console, False)
+                st.session_state.intervals.setdefault(console, 30) # Intervalle par défaut (ex: 30 min)
+                st.session_state.interval_counts.setdefault(console, 0)
+                st.session_state.session_initial_start.setdefault(console, None)
+                st.session_state.last_stop_summary.setdefault(console, None)
 
-# --- Add Console Form ---
-# (Add Console form code remains the same)
-with st.form("add_console"):
-    new_console = st.text_input("Nom de la nouvelle console")
-    submitted = st.form_submit_button("Ajouter")
-    if submitted and new_console:
-        if new_console not in st.session_state.consoles:
-            st.session_state.consoles[new_console] = 0
-            st.session_state.start_times[new_console] = None
-            st.session_state.paused_elapsed[new_console] = 0.0
-            st.session_state.is_paused[new_console] = False
-            st.session_state.intervals[new_console] = 2
-            st.session_state.interval_counts[new_console] = 0
-            st.session_state.session_initial_start[new_console] = None
-            st.session_state.last_stop_summary[new_console] = None
-            st.success(f"Console '{new_console}' ajoutée (intervalle par défaut: 2 min).")
-        else:
-            st.warning(f"La console '{new_console}' existe déjà.")
-
-st.divider()
-
-# --- Display Consoles ---
-if not st.session_state.consoles:
-    st.info("👋 Ajoutez une console en utilisant le formulaire ci-dessus pour commencer le suivi.")
-else:
-    st.subheader("🕹️ Consoles en suivi")
-
-    for console in list(st.session_state.consoles.keys()):
-        # --- Display Last Stop Summary ---
-        # (Summary display logic remains the same)
-        summary = st.session_state.last_stop_summary.get(console)
-        if summary:
-            with st.expander(f"📄 Résumé de la dernière session pour {console}", expanded=True):
-                 st.markdown(f"""
-                 - **Début session :** {summary['start'].strftime('%Y-%m-%d %H:%M:%S')}
-                 - **Fin session :** {summary['end'].strftime('%Y-%m-%d %H:%M:%S')}
-                 - **Durée session :** {summary['duration']:.1f} minutes
-                 """)
-            st.session_state.last_stop_summary[console] = None
-
-        # Get current state for this console
-        total_recorded_minutes = st.session_state.consoles.get(console, 0)
-        start_time = st.session_state.start_times.get(console) # Start of current segment
-        paused_elapsed_minutes = st.session_state.paused_elapsed.get(console, 0.0)
-        is_paused_status = st.session_state.is_paused.get(console, False)
-        interval_minutes = st.session_state.intervals.get(console, 1)
-        initial_start_time = st.session_state.session_initial_start.get(console) # The very first start time
-
-        col_info, col_interval, col_actions, col_stop_delete = st.columns([3, 1, 1, 1])
-
-        # --- Column 1: Information Display ---
-        with col_info:
-            st.markdown(f"### 🎮 {console}")
-
-            current_segment_elapsed_minutes = 0.0
-            status_message = "⚪ Idle" # Default status
-
-            # --- MODIFIED STATUS LOGIC ---
-            if initial_start_time: # Session has been started at least once
-                if start_time is not None and not is_paused_status: # Currently Running
-                    now = datetime.now()
-                    current_segment_elapsed_minutes = (now - start_time).total_seconds() / 60
-                    # Use initial_start_time in the status message
-                    status_message = f"🟢 En cours (Session initiée à **{initial_start_time.strftime('%H:%M:%S')}**)"
-                elif is_paused_status: # Currently Paused
-                    # Use initial_start_time in the status message
-                    status_message = f"⏸️ En Pause (Session initiée à **{initial_start_time.strftime('%H:%M:%S')}**)"
-            # --- END OF MODIFIED STATUS LOGIC ---
-
-            st.markdown(f"**Statut:** {status_message}")
-
-            # --- REMOVED the separate italicized initial start time display ---
-            # if initial_start_time:
-            #    st.markdown(f"*Session démarrée initialement le {initial_start_time.strftime('%Y-%m-%d %H:%M:%S')}*") # No longer needed here
-
-            # Calculate and display times (logic unchanged)
-            total_session_active_time = paused_elapsed_minutes + current_segment_elapsed_minutes
-            st.info(f"⏱️ Session Actuelle Active : **{total_session_active_time:.1f} min**") # Renamed label slightly for clarity
-            display_total_cumulative = total_recorded_minutes + total_session_active_time
-            st.success(f"💡 Temps total cumulé : **{display_total_cumulative:.1f} min**")
-
-        # --- Column 2: Interval Settings & Count ---
-        # (Interval logic remains the same)
-        with col_interval:
-            new_interval = st.number_input(
-                f"Intervalle (min)", min_value=1, value=interval_minutes, step=1,
-                key=f"interval_{console}", help="Durée en minutes pour le compteur d'intervalles."
-            )
-            if new_interval != interval_minutes:
-                 st.session_state.intervals[console] = new_interval
-
-            completed_intervals = 0
-            if new_interval > 0:
-                completed_intervals = math.floor(total_session_active_time / new_interval)
-            st.session_state.interval_counts[console] = completed_intervals
-            st.metric(label="Intervalles Complétés", value=completed_intervals)
+        except (json.JSONDecodeError, TypeError, KeyError, ValueError) as e:
+             # Affiche une erreur si le chargement échoue (fichier corrompu, format invalide)
+             st.error(f"Erreur lors du chargement des données depuis {DATA_FILE}: {e}. Le fichier pourrait être corrompu ou d'un format ancien. Réinitialisation de l'état.")
+             # Réinitialise à un état vide en cas d'échec
+             initialize_empty_state()
+    else:
+        # Si le fichier n'existe pas, initialise simplement un état vide
+        initialize_empty_state()
 
 
-        # --- Column 3: Action Buttons (Start/Pause/Resume) ---
-        # (Button logic remains the same - Start still sets initial_start_time)
-        with col_actions:
-            # START
-            if start_time is None and not is_paused_status:
-                if st.button("▶️ Démarrer", key=f"start_{console}"):
-                    now = datetime.now()
-                    st.session_state.start_times[console] = now
-                    st.session_state.session_initial_start[console] = now # Store initial start
-                    st.session_state.paused_elapsed[console] = 0.0
-                    st.session_state.is_paused[console] = False
-                    st.session_state.interval_counts[console] = 0
-                    st.rerun()
-            # PAUSE
-            if start_time is not None and not is_paused_status:
-                if st.button("⏸️ Pause", key=f"pause_{console}"):
-                    now = datetime.now()
-                    current_segment_elapsed_minutes = (now - start_time).total_seconds() / 60
-                    st.session_state.paused_elapsed[console] += current_segment_elapsed_minutes
-                    st.session_state.start_times[console] = None
-                    st.session_state.is_paused[console] = True
-                    st.rerun()
-            # RESUME
-            if is_paused_status:
-                 if st.button("▶️ Reprendre", key=f"resume_{console}"):
-                     st.session_state.start_times[console] = datetime.now() # Resumes count from now
-                     st.session_state.is_paused[console] = False
-                     # Note: session_initial_start remains unchanged
-                     st.rerun()
-
-
-        # --- Column 4: Stop & Delete Buttons ---
-        # (Stop/Delete logic remains the same)
-        with col_stop_delete:
-            session_is_active = start_time is not None or is_paused_status
-            # STOP
-            if session_is_active:
-                if st.button("⏹️ Stop & Enregistrer", key=f"stop_{console}", help="Arrête le suivi et ajoute le temps de session au total enregistré."):
-                    end_time = datetime.now()
-                    final_session_time = paused_elapsed_minutes
-                    if start_time is not None and not is_paused_status: # Was running
-                        current_segment_elapsed_minutes = (end_time - start_time).total_seconds() / 60
-                        final_session_time += current_segment_elapsed_minutes
-
-                    retrieved_initial_start = initial_start_time if initial_start_time else end_time
-                    st.session_state.last_stop_summary[console] = {
-                        "start": retrieved_initial_start, "end": end_time, "duration": final_session_time
-                    }
-                    st.session_state.consoles[console] += int(final_session_time)
-                    st.session_state.start_times[console] = None
-                    st.session_state.paused_elapsed[console] = 0.0
-                    st.session_state.is_paused[console] = False
-                    st.session_state.interval_counts[console] = 0
-                    st.session_state.session_initial_start[console] = None
-                    st.rerun()
-            # DELETE
-            if st.button("❌ Supprimer", key=f"delete_{console}"):
-                st.session_state.consoles.pop(console, None)
-                st.session_state.start_times.pop(console, None)
-                st.session_state.paused_elapsed.pop(console, None)
-                st.session_state.is_paused.pop(console, None)
-                st.session_state.intervals.pop(console, None)
-                st.session_state.interval_counts.pop(console, None)
-                st.session_state.session_initial_start.pop(console, None)
-                st.session_state.last_stop_summary.pop(console, None)
-                st.warning(f"Console '{console}' supprimée.")
-                st.rerun()
-
-        st.divider()
-
-# --- Reset All Button ---
-# (Reset All logic remains the same)
-st.divider()
-if st.button("🔄 Réinitialiser TOUTES les consoles"):
+# --- Fonction d'Initialisation ---
+def initialize_empty_state():
+    # Définit toutes les clés nécessaires dans st.session_state avec des dictionnaires vides
     st.session_state.consoles = {}
     st.session_state.start_times = {}
     st.session_state.paused_elapsed = {}
@@ -205,5 +99,334 @@ if st.button("🔄 Réinitialiser TOUTES les consoles"):
     st.session_state.interval_counts = {}
     st.session_state.session_initial_start = {}
     st.session_state.last_stop_summary = {}
-    st.success("Toutes les données des consoles ont été réinitialisées.")
-    st.rerun()
+
+# --- Point d'Entrée Principal ---
+# Vérifie si l'état a déjà été initialisé dans cette session Streamlit
+if 'consoles' not in st.session_state:
+    # Si non initialisé, charge l'état depuis le fichier (ou initialise si le fichier n'existe pas / est corrompu)
+    load_state()
+
+# --- Configuration de la Page Streamlit et Auto-Refresh ---
+st.set_page_config(page_title="Suivi des consoles", layout="wide")
+st.title("🎮 Suivi du temps d'utilisation des consoles")
+# Rafraîchit automatiquement la page toutes les 15 secondes pour mettre à jour les timers
+st_autorefresh(interval=15000, limit=None, key="console_refresher")
+
+# --- Formulaire d'Ajout de Console ---
+with st.form("add_console", clear_on_submit=True): # clear_on_submit=True vide le champ après ajout
+    new_console = st.text_input("Nom de la nouvelle console")
+    submitted = st.form_submit_button("Ajouter Console")
+    if submitted and new_console.strip(): # Vérifie que le nom n'est pas vide
+        console_name = new_console.strip()
+        if console_name not in st.session_state.consoles:
+            # Initialise tous les états pour la nouvelle console
+            st.session_state.consoles[console_name] = 0 # Cumul initial à 0
+            st.session_state.start_times[console_name] = None
+            st.session_state.paused_elapsed[console_name] = 0.0
+            st.session_state.is_paused[console_name] = False
+            st.session_state.intervals[console_name] = 30 # Intervalle par défaut
+            st.session_state.interval_counts[console_name] = 0
+            st.session_state.session_initial_start[console_name] = None
+            st.session_state.last_stop_summary[console_name] = None
+            save_state() # Sauvegarde immédiatement après l'ajout
+            st.success(f"Console '{console_name}' ajoutée.")
+            st.rerun() # Rafraîchit pour afficher la nouvelle console
+        else:
+            st.warning(f"La console '{console_name}' existe déjà.")
+    elif submitted:
+        st.warning("Veuillez entrer un nom pour la console.")
+
+st.divider() # Ligne de séparation visuelle
+
+# --- Affichage des Consoles Existantes ---
+if not st.session_state.consoles:
+    st.info("Aucune console ajoutée pour le moment. Utilisez le formulaire ci-dessus pour en ajouter une.")
+else:
+    st.subheader("🕹️ Consoles en suivi")
+    # Crée une copie de la liste des clés pour éviter les problèmes lors de la suppression
+    active_consoles = list(st.session_state.consoles.keys())
+
+    for console in active_consoles:
+        # Vérifie si la console existe toujours (au cas où elle aurait été supprimée dans une itération précédente)
+        if console not in st.session_state.consoles:
+            continue
+
+        # Récupération sûre des états avec .get() pour éviter les KeyError si une clé manque accidentellement
+        total_minutes = st.session_state.consoles.get(console, 0)
+        start = st.session_state.start_times.get(console)
+        paused = st.session_state.paused_elapsed.get(console, 0.0)
+        is_paused = st.session_state.is_paused.get(console, False)
+        interval = st.session_state.intervals.get(console, 30)
+        interval_count_state = st.session_state.interval_counts.get(console, 0)
+        initial = st.session_state.session_initial_start.get(console)
+        summary = st.session_state.last_stop_summary.get(console)
+
+        # --- Affichage du Résumé de la Dernière Session (si disponible) ---
+        if summary:
+            # Utilise un expander pour ne pas prendre trop de place par défaut
+            with st.expander(f"📄 Résumé dernière session : {console}", expanded=False):
+                st.markdown(f"""
+                - **Début :** {summary['start'].strftime('%Y-%m-%d %H:%M:%S')}
+                - **Fin :** {summary['end'].strftime('%Y-%m-%d %H:%M:%S')}
+                - **Durée :** {summary['duration']:.1f} minutes
+                """)
+            # Le résumé reste affiché jusqu'à ce qu'une nouvelle session soit démarrée ou arrêtée
+
+        # --- Section Principale d'Affichage et Contrôles ---
+        col1, col2, col3, col4 = st.columns([3, 1.5, 1.5, 1]) # Ajustement des largeurs des colonnes
+
+        with col1: # Colonne Informations et Statut
+            st.markdown(f"### 🎮 {console}")
+            status = "⚪ Idle" # Statut par défaut
+            now = datetime.now()
+            running_minutes = 0.0 # Temps écoulé depuis le dernier 'start' ou 'resume'
+
+            if initial: # Si une session a une heure de début initiale enregistrée
+                if start and not is_paused: # Si le timer est actif
+                    running_minutes = (now - start).total_seconds() / 60
+                    status = f"🟢 En cours (démarrée à {initial.strftime('%H:%M:%S')})"
+                elif is_paused: # Si le timer est en pause
+                    # Pas de calcul de running_minutes si en pause
+                    status = f"⏸️ En pause (démarrée à {initial.strftime('%H:%M:%S')})"
+                # Si 'initial' existe mais 'start' est None et not is_paused -> vient d'être stoppé (état transitoire avant rerun)
+            # Si 'initial' est None, la console est inactive (Idle)
+
+            # Calcul du temps total de la session actuelle (temps pausé + temps en cours)
+            total_session_minutes = paused + running_minutes
+            # Calcul du temps global (cumul historique + session actuelle)
+            total_global_minutes = total_minutes + total_session_minutes
+
+            st.markdown(f"**Statut :** {status}")
+            # Affiche le temps de la session en cours
+            st.info(f"⏱️ Session actuelle : **{total_session_minutes:.1f} min**")
+            # Affiche le temps total cumulé
+            st.success(f"💡 Cumul total : **{total_global_minutes:.1f} min**")
+
+        with col2: # Colonne Intervalles
+            # Champ pour modifier la durée de l'intervalle
+            new_interval = st.number_input(
+                "Intervalle (min)",
+                min_value=1,
+                value=interval,
+                step=1,
+                key=f"interval_{console}",
+                help="Durée d'un intervalle en minutes."
+            )
+            # Si l'utilisateur change la valeur de l'intervalle
+            if new_interval != interval:
+                st.session_state.intervals[console] = new_interval
+                interval = new_interval # Met à jour la variable locale pour le calcul immédiat
+                save_state()
+                # Pas besoin de rerun ici, le calcul ci-dessous utilisera la nouvelle valeur
+
+            # Calcul du nombre d'intervalles complétés pendant la session actuelle
+            completed_intervals = math.floor(total_session_minutes / interval) if interval > 0 else 0
+
+            # Met à jour l'état du compteur d'intervalles si nécessaire (utile avec auto-refresh)
+            if completed_intervals != interval_count_state:
+                st.session_state.interval_counts[console] = completed_intervals
+                # Pas de save_state ici, sera sauvé par d'autres actions ou à la fin
+                # Pas de rerun ici pour éviter les boucles avec autorefresh
+
+            # Affiche le nombre d'intervalles complétés
+            st.metric("Intervalles complétés", st.session_state.interval_counts.get(console, 0))
+
+        with col3: # Colonne Boutons Start/Pause/Resume
+             # Affiche "Démarrer" seulement si la console est inactive (Idle)
+             if start is None and not is_paused:
+                 if st.button("▶️ Démarrer", key=f"start_{console}"):
+                     now_start = datetime.now()
+                     st.session_state.start_times[console] = now_start
+                     st.session_state.session_initial_start[console] = now_start # Heure de début de la session globale
+                     st.session_state.paused_elapsed[console] = 0.0 # Réinitialise le temps pausé
+                     st.session_state.is_paused[console] = False
+                     st.session_state.interval_counts[console] = 0 # Réinitialise les compteurs d'intervalles
+                     # Efface le résumé de la session précédente quand on démarre une nouvelle
+                     st.session_state.last_stop_summary[console] = None
+                     save_state()
+                     st.rerun() # Rafraîchit l'interface
+
+             # Affiche "Pause" seulement si le timer est en cours
+             elif start and not is_paused:
+                 if st.button("⏸️ Pause", key=f"pause_{console}"):
+                     now_pause = datetime.now()
+                     elapsed_since_last_start = (now_pause - start).total_seconds() / 60
+                     # Ajoute le temps écoulé depuis le dernier start/resume au temps pausé total
+                     st.session_state.paused_elapsed[console] += elapsed_since_last_start
+                     st.session_state.start_times[console] = None # Met start à None pour indiquer la pause
+                     st.session_state.is_paused[console] = True
+                     save_state()
+                     st.rerun()
+
+             # Affiche "Reprendre" seulement si le timer est en pause
+             elif is_paused:
+                 if st.button("▶️ Reprendre", key=f"resume_{console}"):
+                     st.session_state.start_times[console] = datetime.now() # Redémarre le chrono interne
+                     st.session_state.is_paused[console] = False
+                     save_state()
+                     st.rerun()
+
+        with col4: # Colonne Boutons Stop/Supprimer
+            # Affiche "Stop" si la session est en cours ou en pause
+            if start or is_paused:
+                if st.button("⏹️ Stop", key=f"stop_{console}", type="primary"):
+                    end_time = datetime.now()
+                    final_session_duration = paused # Commence avec le temps déjà accumulé pendant les pauses
+
+                    if start: # Si le chrono tournait au moment du stop, ajoute le dernier segment de temps actif
+                        final_session_duration += (end_time - start).total_seconds() / 60
+
+                    # Enregistre le résumé de la session qui vient de se terminer (utile pour l'affichage)
+                    initial_start_time = initial if initial else end_time
+                    st.session_state.last_stop_summary[console] = {
+                        "start": initial_start_time,
+                        "end": end_time,
+                        "duration": final_session_duration
+                    }
+
+                    # --- CHANGEMENT PRINCIPAL ICI ---
+                    # Au lieu d'ajouter au cumul, on remet le compteur de cumul à ZÉRO
+                    st.session_state.consoles[console] = 0
+                    # ---------------------------------
+
+                    # Réinitialise les états de suivi de la session pour cette console
+                    st.session_state.start_times[console] = None
+                    st.session_state.paused_elapsed[console] = 0.0
+                    st.session_state.is_paused[console] = False
+                    st.session_state.session_initial_start[console] = None
+                    st.session_state.interval_counts[console] = 0 # Remet aussi le compteur d'intervalles à zéro
+
+                    save_state() # Sauvegarde l'état réinitialisé (avec cumul à 0)
+                    st.rerun() # Rafraîchit l'interface
+
+            # Bouton pour supprimer la console (toujours visible pour une console existante)
+            # ... (le code pour le bouton Supprimer reste inchangé) ...
+            with st.expander("Supprimer"):
+                 st.warning(f"Attention, ceci supprimera la console '{console}' et son historique.")
+                 if st.button("❌ Confirmer la Suppression", key=f"delete_{console}"):
+                     # Supprime la console de tous les dictionnaires d'état
+                     for state_key in [
+                         "consoles", "start_times", "paused_elapsed", "is_paused",
+                         "intervals", "interval_counts", "session_initial_start", "last_stop_summary"
+                     ]:
+                         if console in st.session_state[state_key]:
+                             st.session_state[state_key].pop(console)
+                     save_state()
+                     st.success(f"Console '{console}' supprimée.")
+                     st.rerun() # Rafraîchit pour enlever la console de l'affichage
+
+          
+
+        # --- Section d'Ajustement Manuel ---
+        # Utilise un expander pour ne pas surcharger l'interface principale
+        with st.expander("🔧 Ajustement Manuel (si session démarrée avant l'app)"):
+            # Désactive les contrôles d'ajustement si une session est déjà active (en cours ou en pause)
+            # L'ajustement doit se faire quand la console est 'Idle' dans l'application
+            manual_disabled = start is not None or is_paused
+
+            # Divise en colonnes pour un meilleur alignement date/heure
+            col_date_manual, col_time_manual = st.columns(2)
+            with col_date_manual:
+                # Sélecteur pour la date de début réelle
+                manual_start_date = st.date_input(
+                    "Date de début réelle",
+                    value=datetime.now().date(), # Défaut à aujourd'hui
+                    key=f"manual_start_date_{console}",
+                    disabled=manual_disabled,
+                    help="Entrez la date à laquelle la session a *vraiment* commencé."
+                )
+            with col_time_manual:
+                # Sélecteur pour l'heure de début réelle
+                 manual_start_time = st.time_input(
+                     "Heure de début réelle",
+                     # Défaut à l'heure actuelle (arrondie à la minute) - l'utilisateur doit changer
+                     value=datetime.now().time().replace(second=0, microsecond=0),
+                     key=f"manual_start_time_{console}",
+                     disabled=manual_disabled,
+                     step=timedelta(minutes=1), # Permet d'ajuster par minute
+                     help="Entrez l'heure à laquelle la session a *vraiment* commencé."
+                 )
+
+            # Champ pour entrer le nombre d'intervalles déjà complétés
+            manual_intervals = st.number_input(
+                "Intervalles déjà complétés",
+                min_value=0,
+                step=1,
+                value=0, # Défaut à 0
+                key=f"manual_intervals_{console}",
+                disabled=manual_disabled,
+                help="Combien d'intervalles (selon la config actuelle) étaient terminés au moment où vous faites cet ajustement ?"
+            )
+
+            # Bouton pour appliquer l'ajustement manuel
+            if st.button("Appliquer l'ajustement", key=f"apply_manual_{console}", disabled=manual_disabled):
+                # Combine la date et l'heure sélectionnées en un objet datetime
+                try:
+                    if manual_start_date and manual_start_time:
+                        manual_start_dt = datetime.combine(manual_start_date, manual_start_time)
+                    else:
+                         st.error("Date ou heure manuelle invalide.")
+                         manual_start_dt = None # Empêche la suite
+
+                    if manual_start_dt: # Si la combinaison a réussi
+                        now_apply = datetime.now()
+                        # Vérifie que l'heure de début est bien dans le passé
+                        if manual_start_dt >= now_apply:
+                            st.error("L'heure de début manuelle doit être dans le passé.")
+                        else:
+                            # Calcule le temps écoulé entre le début manuel et maintenant (en minutes)
+                            elapsed_manual_minutes = (now_apply - manual_start_dt).total_seconds() / 60
+
+                            # --- Mise à jour de l'état ---
+                            # Heure de début réelle de la session
+                            st.session_state.session_initial_start[console] = manual_start_dt
+                            # Heure à laquelle le *tracking de l'app* commence (maintenant)
+                            st.session_state.start_times[console] = now_apply
+                            # Pré-charge le temps déjà passé comme s'il avait été "pausé"
+                            st.session_state.paused_elapsed[console] = elapsed_manual_minutes
+                             # Applique le nombre d'intervalles manuels
+                            st.session_state.interval_counts[console] = manual_intervals
+                            # S'assure que l'état est actif (pas en pause)
+                            st.session_state.is_paused[console] = False
+
+                            # Efface le résumé précédent, car on commence une nouvelle session (ajustée)
+                            st.session_state.last_stop_summary[console] = None
+
+                            save_state() # Sauvegarde le nouvel état ajusté
+                            st.success(f"Ajustement appliqué pour {console}. Session démarrée à {manual_start_dt.strftime('%Y-%m-%d %H:%M:%S')}, temps actuel {elapsed_manual_minutes:.1f} min, {manual_intervals} intervalles.")
+                            st.rerun() # Rafraîchit l'interface pour refléter l'ajustement
+
+                except Exception as e:
+                    st.error(f"Erreur lors de l'application de l'ajustement : {e}")
+
+        st.divider() # Séparateur visuel entre chaque console
+
+# --- Actions Globales dans la Sidebar ---
+st.sidebar.header("⚠️ Actions Globales")
+
+# Bouton pour forcer la sauvegarde manuelle de l'état actuel
+if st.sidebar.button("💾 Forcer Sauvegarde"):
+     try:
+         save_state()
+         st.sidebar.success("État actuel sauvegardé avec succès.")
+     except Exception as e:
+         st.sidebar.error(f"Erreur lors de la sauvegarde manuelle: {e}")
+
+# Bouton pour réinitialiser toutes les données (avec confirmation)
+st.sidebar.markdown("---") # Séparateur dans la sidebar
+if st.sidebar.button("🔄 Réinitialiser TOUTES les consoles"):
+    # Utilise un expander dans la sidebar pour la confirmation
+    with st.sidebar.expander("Confirmation de Réinitialisation", expanded=True):
+        st.warning("Ceci effacera TOUTES les données sauvegardées (consoles, temps, etc.). Êtes-vous absolument sûr ?")
+        # Bouton de confirmation finale
+        if st.button("OUI, TOUT RÉINITIALISER DÉFINITIVEMENT", key="confirm_reset_all"):
+            initialize_empty_state() # Réinitialise st.session_state
+            # Supprime le fichier de sauvegarde s'il existe
+            if os.path.exists(DATA_FILE):
+                try:
+                    os.remove(DATA_FILE)
+                    st.success("Fichier de données supprimé.")
+                except OSError as e:
+                    st.error(f"Impossible de supprimer le fichier de données ({DATA_FILE}): {e}")
+            st.success("Toutes les données ont été réinitialisées.")
+            st.rerun() # Rafraîchit l'application pour montrer l'état vide
